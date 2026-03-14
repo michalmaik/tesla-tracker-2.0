@@ -1,11 +1,13 @@
 import json
 import time
 import re
+import os
 from datetime import datetime, timezone
 from curl_cffi import requests as cf_requests
 import requests
 
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1482315139893170367/M86LvQvzrqIw679r1igJsT74hZ8wQNIaLC9MIqt45RWhE8duomeBmUyD6DcPFrc2tY1C"
+# ustawiane dynamicznie w main() na podstawie MONITOR_MODE
 STATE_FILE = "cars_state.json"
 HISTORY_FILE = "price_history.json"
 
@@ -252,8 +254,16 @@ def fetch_all_cars(rates):
     except Exception as e:
         print(f"  Cookies error: {e}")
 
+    mode = os.environ.get("MONITOR_MODE", "ALL")  # CPO, USED lub ALL
+    print(f"  Tryb: {mode}")
+
     for country_cfg in COUNTRIES:
         for listing in LISTING_TYPES:
+            # filtruj po trybie
+            if mode == "CPO" and listing["label"] != "CPO":
+                continue
+            if mode == "USED" and listing["label"] != "Used":
+                continue
             # Used tylko dla wybranych krajow
             if listing["label"] == "Used" and country_cfg["name"] not in USED_COUNTRIES:
                 continue
@@ -518,8 +528,14 @@ def should_send_daily_summary():
 
 
 def main():
+    global STATE_FILE, HISTORY_FILE
+    mode = os.environ.get("MONITOR_MODE", "ALL")
+    STATE_FILE = f"cars_state_{mode.lower()}.json"
+    HISTORY_FILE = f"price_history_{mode.lower()}.json"
+
     now = datetime.now(timezone.utc)
     print(f"[{now.isoformat()}] Start monitorowania...")
+    print(f"  Pliki stanu: {STATE_FILE}, {HISTORY_FILE}")
     print(f"  Filtr: CPO {MIN_YEAR_CPO}-{MAX_YEAR}, Used {MIN_YEAR_USED}-{MAX_YEAR}, max €{MAX_EUR}, max {MAX_KM} km")
 
     print("\nPobieram kursy walut...")
