@@ -26,13 +26,9 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://ev-inventory.com/for-sale/Netherlands/M3/CPO/",
     "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.9",
     "X-Requested-With": "XMLHttpRequest",
     "Connection": "keep-alive",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
 }
 
 
@@ -41,33 +37,38 @@ def fetch_cars():
     offset = 0
     session = requests.Session()
 
-    # najpierw odwiedz glowna strone zeby dostac cookies
     print("  Pobieram cookies z głównej strony...")
     try:
-        session.get(
+        r = session.get(
             "https://ev-inventory.com/for-sale/Netherlands/M3/CPO/",
-            headers={
-                "User-Agent": HEADERS["User-Agent"],
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
+            headers={"User-Agent": HEADERS["User-Agent"], "Accept": "text/html,*/*"},
             timeout=15,
         )
-        time.sleep(1)
+        print(f"  Strona główna status: {r.status_code}, cookies: {dict(session.cookies)}")
+        time.sleep(2)
     except Exception as e:
-        print(f"  Uwaga: nie udało się pobrać cookies: {e}")
+        print(f"  Uwaga cookies: {e}")
 
     while True:
         params = dict(PARAMS)
         params["offset"] = offset
         resp = session.get(API_URL, params=params, headers=HEADERS, timeout=15)
-        print(f"  Status HTTP: {resp.status_code}, URL: {resp.url}")
+        print(f"  API status: {resp.status_code}")
+        print(f"  API response (pierwsze 500 znaków): {resp.text[:500]}")
+
+        if resp.status_code == 404:
+            print("  BLOKADA 404 - strona blokuje GitHub Actions IP")
+            print("  Próbuję bez session...")
+            resp2 = requests.get(API_URL, params=params, headers=HEADERS, timeout=15)
+            print(f"  Bez session status: {resp2.status_code}, body: {resp2.text[:300]}")
+            resp.raise_for_status()
+
         resp.raise_for_status()
 
         try:
             data = resp.json()
         except Exception:
-            print(f"  Odpowiedź nie jest JSON:\n{resp.text[:500]}")
+            print(f"  Nie jest JSON: {resp.text[:500]}")
             raise
 
         cars = data.get("results", [])
@@ -146,18 +147,15 @@ def build_price_drop_embed(car, old_price, new_price):
     url = get_car_url(car)
     diff = old_price - new_price
     pct = round(diff / old_price * 100, 1)
-    old_str = f"€{old_price:,}".replace(",", " ")
-    new_str = f"€{new_price:,}".replace(",", " ")
-    diff_str = f"€{diff:,}".replace(",", " ")
     return {
         "title": "📉 Spadek ceny!",
         "description": format_car_info(car),
         "url": url,
         "color": 0xF0A500,
         "fields": [
-            {"name": "Stara cena", "value": old_str, "inline": True},
-            {"name": "Nowa cena", "value": new_str, "inline": True},
-            {"name": "Obniżka", "value": f"-{diff_str} (-{pct}%)", "inline": False},
+            {"name": "Stara cena", "value": f"€{old_price:,}".replace(",", " "), "inline": True},
+            {"name": "Nowa cena", "value": f"€{new_price:,}".replace(",", " "), "inline": True},
+            {"name": "Obniżka", "value": f"-€{diff:,} (-{pct}%)".replace(",", " "), "inline": False},
         ],
         "footer": {"text": f"Tesla CPO Monitor · {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"},
     }
@@ -185,30 +183,28 @@ def main():
     print(f"Poprzedni stan: {len(previous_state)} aut.")
 
     embeds = []
-
     for car_id, car in current_cars.items():
         price = get_price(car)
         if car_id not in previous_state:
-            print(f"  NOWE auto: {car_id}")
+            print(f"  NOWE: {car_id}")
             embeds.append(build_new_car_embed(car, price))
         else:
             old_price = previous_state[car_id].get("price")
             if price and old_price and price < old_price:
-                print(f"  SPADEK CENY: {car_id} — {old_price} -> {price}")
+                print(f"  SPADEK: {car_id} {old_price} -> {price}")
                 embeds.append(build_price_drop_embed(car, old_price, price))
 
-    new_state = {
+    save_state({
         car_id: {"price": get_price(car), "seen_at": datetime.utcnow().isoformat()}
         for car_id, car in current_cars.items()
-    }
-    save_state(new_state)
+    })
 
     if embeds:
         for i in range(0, len(embeds), 10):
             send_discord(embeds[i:i+10])
-        print(f"Wysłano {len(embeds)} powiadomień na Discord.")
+        print(f"Wysłano {len(embeds)} powiadomień.")
     else:
-        print("Brak zmian — nic nie wysłano.")
+        print("Brak zmian.")
 
 
 if __name__ == "__main__":
