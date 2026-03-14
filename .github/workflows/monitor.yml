@@ -8,6 +8,7 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repo
@@ -29,14 +30,16 @@ jobs:
         continue-on-error: true
 
       - name: Run monitor
+        env:
+          MONITOR_MODE: CPO
         run: python monitor.py
 
-      - name: Save state as artifact
+      - name: Save state
         uses: actions/upload-artifact@v4
         with:
           name: cars-state
           path: |
-            cars_state.json
-            price_history.json
+            cars_state_cpo.json
+            price_history_cpo.json
           retention-days: 30
           overwrite: true
