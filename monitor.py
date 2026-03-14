@@ -2,15 +2,12 @@ import json
 import time
 from datetime import datetime
 from selenium import webdriver
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import requests
 
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1482315139893170367/M86LvQvzrqIw679r1igJsT74hZ8wQNIaLC9MIqt45RWhE8duomeBmUyD6DcPFrc2tY1C"
 STATE_FILE = "cars_state.json"
 
-# Tesla inventory URL - Holandia, Model 3, uzywane, posortowane od najtanszych
 TESLA_URL = "https://www.tesla.com/nl_NL/inventory/used/m3?arrangeby=plh&zip=1012&range=0"
 
 MAX_PRICE = 20000
@@ -21,105 +18,95 @@ MAX_YEAR = 2021
 def get_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--no-sandbox")
-    options.add_argument("--headless")
-    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--headless=new")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-extensions")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
+    # wlacz logowanie requestow sieciowych
+    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
     return webdriver.Chrome(options=options)
 
 
 def fetch_cars():
-    driver = get_driver()
-    driver.set_page_load_timeout(90)
     all_cars = {}
+    driver = get_driver()
 
     try:
-        print(f"  Ładuję: {TESLA_URL}")
+        print(f"  Ładuję stronę Tesla...")
         driver.get(TESLA_URL)
+        time.sleep(15)  # czekaj az strona zaladuje i wykona requesty do API
 
-        # czekaj na zaladowanie wynikow
-        WebDriverWait(driver, 60).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "results-container"))
-        )
-        time.sleep(3)  # dodatkowe czekanie na doladowanie wszystkich kart
+        # sprawdz tytuł strony
+        print(f"  Tytuł strony: {driver.title}")
 
-        # pobierz dane jako JSON z okna przegladarki (Tesla wstrzykuje dane do window)
-        inventory_data = driver.execute_script(
-            "return window.__INITIAL_STATE__ || window.tesla || null"
-        )
+        # próba 1: wyciągnij dane z JS window
+        for js_var in ["__INITIAL_STATE__", "tesla", "App", "TeslaFinance"]:
+            try:
+                data = driver.execute_script(f"return JSON.stringify(window.{js_var})")
+                if data and data != "null" and len(data) > 100:
+                    print(f"  Znalazłem dane w window.{js_var} ({len(data)} znaków)")
+                    parsed = json.loads(data)
+                    cars = extract_cars_from_js(parsed)
+                    if cars:
+                        print(f"  Aut z JS: {len(cars)}")
+                        all_cars.update(cars)
+                        break
+            except Exception:
+                pass
 
-        if inventory_data:
-            print("  Znaleziono dane w window.__INITIAL_STATE__")
-            # przeszukaj strukture danych
-            results = []
-            if isinstance(inventory_data, dict):
-                results = (
-                    inventory_data.get("inventory", {}).get("results", [])
-                    or inventory_data.get("results", [])
-                    or []
-                )
-            for car in results:
-                vin = car.get("VIN", "")
-                if not vin:
-                    continue
-                year = car.get("Year", 0)
-                price = car.get("InventoryPrice") or car.get("Price") or 0
-                if year and (year < MIN_YEAR or year > MAX_YEAR):
-                    continue
-                if price and price > MAX_PRICE:
-                    continue
-                all_cars[vin] = car
-
-        # jesli nie ma danych w JS, scrapeuj HTML
+        # próba 2: interceptuj logi sieciowe i znajdź inventory API response
         if not all_cars:
-            print("  Brak danych JS, scrapuję HTML...")
-            car_sections = driver.find_elements(By.CLASS_NAME, "result-header")
-            print(f"  Znaleziono {len(car_sections)} sekcji aut w HTML")
-
-            for section in car_sections:
+            print("  Szukam w logach sieciowych...")
+            logs = driver.get_log("performance")
+            for log in logs:
                 try:
-                    # pobierz cene
-                    price_el = section.find_elements(By.CLASS_NAME, "result-purchase-price")
-                    price_str = price_el[0].get_attribute("innerHTML") if price_el else ""
-                    price = int("".join(filter(str.isdigit, price_str))) if price_str else 0
+                    msg = json.loads(log["message"])["message"]
+                    if msg.get("method") == "Network.responseReceived":
+                        url = msg.get("params", {}).get("response", {}).get("url", "")
+                        if "inventory" in url and ("results" in url or "api" in url):
+                            print(f"  Znaleziono request: {url[:100]}")
+                except Exception:
+                    pass
 
-                    # pobierz rok
-                    year_els = section.find_elements(By.CLASS_NAME, "result-basic-info")
-                    year_text = year_els[0].text if year_els else ""
-                    year = 0
-                    for word in year_text.split():
-                        if word.isdigit() and len(word) == 4:
-                            year = int(word)
-                            break
+        # próba 3: sprawdz source strony czy jest JSON z autami
+        if not all_cars:
+            print("  Szukam w source strony...")
+            page_source = driver.page_source
+            # szukaj JSON z VIN
+            import re
+            vin_matches = re.findall(r'"VIN"\s*:\s*"([A-Z0-9]{17})"', page_source)
+            print(f"  VINy w source: {len(vin_matches)}")
 
-                    # pobierz link
-                    link_el = section.find_elements(By.TAG_NAME, "a")
-                    url = link_el[0].get_attribute("href") if link_el else ""
+            if vin_matches:
+                # spróbuj wyciągnąć cały JSON zawierający te VINy
+                json_blocks = re.findall(r'\{[^{}]*"VIN"[^{}]*\}', page_source)
+                for block in json_blocks[:5]:
+                    try:
+                        car = json.loads(block)
+                        vin = car.get("VIN", "")
+                        if vin:
+                            year = car.get("Year", 0)
+                            price = car.get("InventoryPrice") or car.get("Price") or 0
+                            print(f"  Auto: VIN={vin}, rok={year}, cena={price}")
+                            if year and (year < MIN_YEAR or year > MAX_YEAR):
+                                continue
+                            if price and price > MAX_PRICE:
+                                continue
+                            all_cars[vin] = car
+                    except Exception:
+                        pass
 
-                    # filtruj
-                    if year and (year < MIN_YEAR or year > MAX_YEAR):
-                        continue
-                    if price and price > MAX_PRICE:
-                        continue
-
-                    # unikalne ID z URL lub tresci
-                    car_id = url.split("/")[-1] if url else f"car_{price}_{year}"
-                    all_cars[car_id] = {
-                        "price": price,
-                        "year": year,
-                        "url": url,
-                        "text": year_text[:100],
-                    }
-                    print(f"  Auto: rok={year}, cena=€{price}, url={url[:60]}")
-
-                except Exception as e:
-                    print(f"  Błąd parsowania sekcji: {e}")
+        # zapisz screenshot do debugowania
+        driver.save_screenshot("/tmp/tesla_screenshot.png")
+        print("  Screenshot zapisany w /tmp/tesla_screenshot.png")
+        print(f"  Source (pierwsze 2000 znaków):\n{driver.page_source[:2000]}")
 
     finally:
         driver.quit()
@@ -127,14 +114,41 @@ def fetch_cars():
     return all_cars
 
 
+def extract_cars_from_js(data, depth=0):
+    if depth > 5:
+        return {}
+    cars = {}
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("VIN"):
+                vin = item["VIN"]
+                year = item.get("Year", 0)
+                price = item.get("InventoryPrice") or item.get("Price") or 0
+                if year and (year < MIN_YEAR or year > MAX_YEAR):
+                    continue
+                if price and price > MAX_PRICE:
+                    continue
+                cars[vin] = item
+            else:
+                cars.update(extract_cars_from_js(item, depth + 1))
+    elif isinstance(data, dict):
+        if data.get("VIN"):
+            vin = data["VIN"]
+            year = data.get("Year", 0)
+            price = data.get("InventoryPrice") or data.get("Price") or 0
+            if not (year and (year < MIN_YEAR or year > MAX_YEAR)) and not (price and price > MAX_PRICE):
+                cars[vin] = data
+        for v in data.values():
+            if isinstance(v, (dict, list)):
+                cars.update(extract_cars_from_js(v, depth + 1))
+    return cars
+
+
 def get_price(car):
     return car.get("InventoryPrice") or car.get("Price") or car.get("price") or None
 
 
 def get_car_url(car):
-    url = car.get("url", "")
-    if url:
-        return url
     vin = car.get("VIN", "")
     return f"https://www.tesla.com/nl_NL/used/{vin}" if vin else "https://www.tesla.com/nl_NL/inventory/used/m3"
 
@@ -142,13 +156,12 @@ def get_car_url(car):
 def format_car_info(car):
     year = car.get("Year") or car.get("year", "")
     trim = car.get("TrimName", "")
-    text = car.get("text", "")
     color_data = [o for o in car.get("OptionCodeData", []) if o.get("Group") == "PAINT"]
     color = color_data[0].get("Name", "") if color_data else ""
     odometer = car.get("Odometer", "")
     odo_unit = car.get("OdometerType", "km")
     parts = [x for x in [str(year), "Model 3", trim, color] if x]
-    info = " · ".join(parts) if parts else text
+    info = " · ".join(parts)
     if odometer:
         info += f" · {int(odometer):,} {odo_unit}".replace(",", " ")
     return info or "Tesla Model 3"
