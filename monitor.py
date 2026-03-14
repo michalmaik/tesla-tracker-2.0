@@ -17,6 +17,9 @@ LISTING_TYPES = [
     {"token": "65540",  "label": "Used"},
 ]
 
+# kraje dla Used (tylko wybrane)
+USED_COUNTRIES = {"Netherlands", "Belgium", "Germany"}
+
 COUNTRIES = [
     # EUR
     {"name": "Netherlands",    "currency": "EUR"},
@@ -249,6 +252,9 @@ def fetch_all_cars(rates):
 
     for country_cfg in COUNTRIES:
         for listing in LISTING_TYPES:
+            # Used tylko dla wybranych krajow
+            if listing["label"] == "Used" and country_cfg["name"] not in USED_COUNTRIES:
+                continue
             cfg = {**country_cfg, "token": listing["token"], "label": listing["label"]}
             cars = fetch_country(session, cfg, rates)
             all_cars.update(cars)
