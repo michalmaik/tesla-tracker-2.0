@@ -1,16 +1,16 @@
 import json
 import time
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from curl_cffi import requests as cf_requests
 import requests
 
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1482315139893170367/M86LvQvzrqIw679r1igJsT74hZ8wQNIaLC9MIqt45RWhE8duomeBmUyD6DcPFrc2tY1C"
 STATE_FILE = "cars_state.json"
+HISTORY_FILE = "price_history.json"
 
 API_URL = "https://ev-inventory.com/lib/get_stock_23.php"
 
-# kraje z ich walutami i tokenami
 COUNTRIES = [
     {"name": "Netherlands", "currency": "EUR", "token": "131076"},
     {"name": "Germany",     "currency": "EUR", "token": "131076"},
@@ -22,18 +22,14 @@ COUNTRIES = [
 ]
 
 COUNTRY_FLAGS = {
-    "Netherlands": "🇳🇱",
-    "Germany":     "🇩🇪",
-    "France":      "🇫🇷",
-    "Belgium":     "🇧🇪",
-    "Luxembourg":  "🇱🇺",
-    "Sweden":      "🇸🇪",
-    "Denmark":     "🇩🇰",
+    "Netherlands": "🇳🇱", "Germany": "🇩🇪", "France": "🇫🇷",
+    "Belgium": "🇧🇪", "Luxembourg": "🇱🇺", "Sweden": "🇸🇪", "Denmark": "🇩🇰",
 }
 
 MAX_EUR = 20000
 MIN_YEAR = 2018
 MAX_YEAR = 2021
+MAX_KM = 150000  # max przebieg w km
 
 HEADERS = {
     "accept": "*/*",
@@ -53,48 +49,32 @@ HEADERS = {
 
 
 def get_exchange_rates():
-    """Pobierz aktualne kursy walut względem PLN"""
     try:
-        resp = requests.get(
-            "https://api.frankfurter.app/latest?from=PLN&to=EUR,SEK,DKK",
-            timeout=10
-        )
+        resp = requests.get("https://api.frankfurter.app/latest?from=PLN&to=EUR,SEK,DKK", timeout=10)
         data = resp.json()
-        rates = data.get("rates", {})
-        # frankfurter zwraca ile PLN = 1 waluta, wiec odwracamy
-        result = {}
-        for currency, rate in rates.items():
-            result[currency] = 1.0 / rate  # ile PLN za 1 jednostke waluty
+        result = {c: 1.0 / r for c, r in data.get("rates", {}).items()}
         result["PLN"] = 1.0
         print(f"  Kursy: EUR={result.get('EUR', 0):.2f} PLN, SEK={result.get('SEK', 0):.4f} PLN, DKK={result.get('DKK', 0):.4f} PLN")
         return result
     except Exception as e:
-        print(f"  Błąd pobierania kursów: {e}, używam przybliżonych")
+        print(f"  Błąd kursów: {e}, używam przybliżonych")
         return {"EUR": 4.25, "SEK": 0.40, "DKK": 0.57, "PLN": 1.0}
 
 
 def to_eur(price, currency, rates):
-    """Przelicz cenę na EUR"""
     if currency == "EUR":
         return price
-    pln = price * rates.get(currency, 1.0)
-    eur_rate = rates.get("EUR", 4.25)
-    return pln / eur_rate
+    return price * rates.get(currency, 1.0) / rates.get("EUR", 4.25)
 
 
 def to_pln(price, currency, rates):
-    """Przelicz cenę na PLN"""
     return price * rates.get(currency, 1.0)
 
 
-def get_currency_max(currency, rates):
-    """Ile max w danej walucie odpowiada MAX_EUR"""
+def get_max_local(currency, rates):
     if currency == "EUR":
         return MAX_EUR
-    eur_rate = rates.get("EUR", 4.25)
-    currency_rate = rates.get(currency, 1.0)
-    # MAX_EUR EUR * eur_rate PLN/EUR / currency_rate PLN/currency
-    return int(MAX_EUR * eur_rate / currency_rate)
+    return int(MAX_EUR * rates.get("EUR", 4.25) / rates.get(currency, 1.0))
 
 
 def parse_cars_from_html(html, country):
@@ -129,8 +109,23 @@ def parse_cars_from_html(html, country):
                 price_str = re.sub(r"[^\d]", "", price_match.group(1))
                 price = int(price_str) if price_str else 0
 
+            mileage = 0
+            mileage_str = ""
             mileage_match = re.search(r"([\d\s,.']+)\s*km", block, re.IGNORECASE)
-            mileage = mileage_match.group(0).strip() if mileage_match else ""
+            if mileage_match:
+                mileage_str = mileage_match.group(0).strip()
+                mileage_clean = re.sub(r"[^\d]", "", mileage_match.group(1))
+                mileage = int(mileage_clean) if mileage_clean else 0
+
+            # filtruj przebieg
+            if mileage and mileage > MAX_KM:
+                continue
+
+            # wyciagnij zdjecie
+            img_match = re.search(r"<img\s+src=['\"]([^'\"]+)['\"]", block)
+            image_url = img_match.group(1) if img_match else ""
+            if image_url and not image_url.startswith("http"):
+                image_url = "https://ev-inventory.com" + image_url
 
             cars[car_id] = {
                 "id": car_id,
@@ -139,7 +134,9 @@ def parse_cars_from_html(html, country):
                 "year": year,
                 "price": price,
                 "mileage": mileage,
+                "mileage_str": mileage_str,
                 "country": country,
+                "image_url": image_url,
             }
         except Exception as e:
             print(f"  Błąd parsowania: {e}")
@@ -150,23 +147,15 @@ def parse_cars_from_html(html, country):
 def fetch_country(session, country_cfg, rates):
     country = country_cfg["name"]
     currency = country_cfg["currency"]
-    max_local = get_currency_max(currency, rates)
-
-    print(f"\n  [{country}] max={max_local} {currency}")
+    max_local = get_max_local(currency, rates)
+    print(f"\n  [{country}] max={max_local} {currency}, max_km={MAX_KM}")
 
     form_data = {
-        "country": country,
-        "state": "",
-        "sortsale": "256",
-        "token": country_cfg["token"],
-        "spec": "0",
-        "advanced": "0",
-        "miles": "99999",
-        "max": str(max_local),
-        "minyear": str(MIN_YEAR),
-        "maxyear": str(MAX_YEAR),
-        "minrange": "0",
-        "offset": "0",
+        "country": country, "state": "", "sortsale": "256",
+        "token": country_cfg["token"], "spec": "0", "advanced": "0",
+        "miles": "99999", "max": str(max_local),
+        "minyear": str(MIN_YEAR), "maxyear": str(MAX_YEAR),
+        "minrange": "0", "offset": "0",
     }
 
     all_cars = {}
@@ -178,7 +167,6 @@ def fetch_country(session, country_cfg, rates):
         print(f"  Status: {resp.status_code}, offset={offset}")
 
         if resp.status_code != 200:
-            print(f"  Error: {resp.text[:200]}")
             break
 
         html = resp.text.strip()
@@ -187,16 +175,13 @@ def fetch_country(session, country_cfg, rates):
 
         batch = parse_cars_from_html(html, country)
         print(f"  Sparsowano: {len(batch)} aut")
-
         if not batch:
             break
 
         all_cars.update(batch)
         offset += len(batch)
-
         if len(batch) < 10:
             break
-
         time.sleep(1)
 
     return all_cars
@@ -208,11 +193,8 @@ def fetch_all_cars(rates):
 
     print("  Pobieram cookies...")
     try:
-        session.get(
-            "https://ev-inventory.com/for-sale/Netherlands/M3/CPO/",
-            headers={"user-agent": HEADERS["user-agent"]},
-            timeout=15,
-        )
+        session.get("https://ev-inventory.com/for-sale/Netherlands/M3/CPO/",
+                    headers={"user-agent": HEADERS["user-agent"]}, timeout=15)
         time.sleep(2)
         print("  Cookies OK")
     except Exception as e:
@@ -224,6 +206,57 @@ def fetch_all_cars(rates):
         time.sleep(2)
 
     return all_cars
+
+
+def load_state():
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def load_history():
+    try:
+        with open(HISTORY_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_history(history):
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def update_history(history, car_id, price, currency, rates):
+    if car_id not in history:
+        history[car_id] = []
+    last = history[car_id][-1] if history[car_id] else None
+    if not last or last["price"] != price:
+        history[car_id].append({
+            "price": price,
+            "eur": round(to_eur(price, currency, rates)),
+            "pln": round(to_pln(price, currency, rates)),
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        })
+    # zachowaj max 20 wpisow
+    history[car_id] = history[car_id][-20:]
+    return history
+
+
+def format_price_history(history_entries):
+    if len(history_entries) < 2:
+        return None
+    lines = []
+    for entry in history_entries[-5:]:
+        lines.append(f"{entry['date']}: €{entry['eur']:,}".replace(",", " "))
+    return "\n".join(lines)
 
 
 def send_discord(embeds):
@@ -244,80 +277,149 @@ def build_new_car_embed(car_id, car, price, rates):
     country = car.get("country", "")
     currency = get_currency_for_country(country)
     flag = COUNTRY_FLAGS.get(country, "🇪🇺")
-
-    price_eur = to_eur(price, currency, rates) if price else 0
-    price_pln = to_pln(price, currency, rates) if price else 0
+    price_eur = int(to_eur(price, currency, rates)) if price else 0
+    price_pln = int(to_pln(price, currency, rates)) if price else 0
 
     if currency == "EUR":
         price_local_str = f"€{price:,}".replace(",", " ")
     elif currency == "SEK":
         price_local_str = f"{price:,} kr".replace(",", " ")
-    elif currency == "DKK":
-        price_local_str = f"{price:,} DKK".replace(",", " ")
     else:
         price_local_str = f"{price:,} {currency}".replace(",", " ")
 
-    return {
+    embed = {
         "title": f"🚗 Nowe Tesla w ofercie! {flag}",
         "description": car.get("title", "Tesla Model 3"),
         "url": car.get("url", ""),
         "color": 0x1DB954,
         "fields": [
             {"name": "Cena lokalna", "value": price_local_str if price else "brak", "inline": True},
-            {"name": "≈ EUR", "value": f"€{int(price_eur):,}".replace(",", " ") if price_eur else "—", "inline": True},
-            {"name": "≈ PLN", "value": f"{int(price_pln):,} zł".replace(",", " ") if price_pln else "—", "inline": True},
+            {"name": "≈ EUR", "value": f"€{price_eur:,}".replace(",", " "), "inline": True},
+            {"name": "≈ PLN", "value": f"{price_pln:,} zł".replace(",", " "), "inline": True},
             {"name": "Kraj", "value": f"{flag} {country}", "inline": True},
-            {"name": "Przebieg", "value": car.get("mileage", "—") or "—", "inline": True},
+            {"name": "Rok", "value": str(car.get("year", "—")), "inline": True},
+            {"name": "Przebieg", "value": car.get("mileage_str", "—") or "—", "inline": True},
         ],
-        "footer": {"text": f"Tesla CPO Monitor · {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"},
+        "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
     }
+    if car.get("image_url"):
+        embed["image"] = {"url": car["image_url"]}
+    return embed
 
 
-def build_price_drop_embed(car_id, car, old_price, new_price, rates):
+def build_price_drop_embed(car_id, car, old_price, new_price, rates, history):
     country = car.get("country", "")
     currency = get_currency_for_country(country)
     flag = COUNTRY_FLAGS.get(country, "🇪🇺")
 
-    old_pln = to_pln(old_price, currency, rates)
-    new_pln = to_pln(new_price, currency, rates)
-    old_eur = to_eur(old_price, currency, rates)
-    new_eur = to_eur(new_price, currency, rates)
+    old_eur = int(to_eur(old_price, currency, rates))
+    new_eur = int(to_eur(new_price, currency, rates))
+    old_pln = int(to_pln(old_price, currency, rates))
+    new_pln = int(to_pln(new_price, currency, rates))
+    diff_eur = old_eur - new_eur
     diff_pln = old_pln - new_pln
-    pct = round(diff_pln / old_pln * 100, 1)
+    pct = round((old_price - new_price) / old_price * 100, 1)
 
-    return {
+    embed = {
         "title": f"📉 Spadek ceny! {flag}",
         "description": car.get("title", "Tesla Model 3"),
         "url": car.get("url", ""),
         "color": 0xF0A500,
         "fields": [
-            {"name": "Stara cena (EUR)", "value": f"€{int(old_eur):,}".replace(",", " "), "inline": True},
-            {"name": "Nowa cena (EUR)", "value": f"€{int(new_eur):,}".replace(",", " "), "inline": True},
-            {"name": "Stara cena (PLN)", "value": f"{int(old_pln):,} zł".replace(",", " "), "inline": True},
-            {"name": "Nowa cena (PLN)", "value": f"{int(new_pln):,} zł".replace(",", " "), "inline": True},
-            {"name": "Obniżka", "value": f"-{int(diff_pln):,} zł (-{pct}%)".replace(",", " "), "inline": False},
+            {"name": "Stara cena (EUR)", "value": f"€{old_eur:,}".replace(",", " "), "inline": True},
+            {"name": "Nowa cena (EUR)", "value": f"€{new_eur:,}".replace(",", " "), "inline": True},
+            {"name": "Obniżka (EUR)", "value": f"-€{diff_eur:,} (-{pct}%)".replace(",", " "), "inline": True},
+            {"name": "Stara cena (PLN)", "value": f"{old_pln:,} zł".replace(",", " "), "inline": True},
+            {"name": "Nowa cena (PLN)", "value": f"{new_pln:,} zł".replace(",", " "), "inline": True},
+            {"name": "Obniżka (PLN)", "value": f"-{diff_pln:,} zł".replace(",", " "), "inline": True},
+            {"name": "Kraj", "value": f"{flag} {country}", "inline": True},
+            {"name": "Rok", "value": str(car.get("year", "—")), "inline": True},
+            {"name": "Przebieg", "value": car.get("mileage_str", "—") or "—", "inline": True},
+        ],
+        "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
+    }
+
+    history_entries = history.get(car_id, [])
+    history_str = format_price_history(history_entries)
+    if history_str:
+        embed["fields"].append({"name": "Historia cen (EUR)", "value": history_str, "inline": False})
+
+    if car.get("image_url"):
+        embed["image"] = {"url": car["image_url"]}
+    return embed
+
+
+def build_removed_car_embed(car_id, car, price, rates):
+    country = car.get("country", "")
+    currency = get_currency_for_country(country)
+    flag = COUNTRY_FLAGS.get(country, "🇪🇺")
+    price_eur = int(to_eur(price, currency, rates)) if price else 0
+    price_pln = int(to_pln(price, currency, rates)) if price else 0
+
+    return {
+        "title": f"✅ Auto sprzedane / zdjęte z oferty {flag}",
+        "description": car.get("title", car_id),
+        "color": 0x95a5a6,
+        "fields": [
+            {"name": "Ostatnia cena (EUR)", "value": f"€{price_eur:,}".replace(",", " ") if price else "—", "inline": True},
+            {"name": "Ostatnia cena (PLN)", "value": f"{price_pln:,} zł".replace(",", " ") if price else "—", "inline": True},
             {"name": "Kraj", "value": f"{flag} {country}", "inline": True},
         ],
-        "footer": {"text": f"Tesla CPO Monitor · {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"},
+        "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
     }
 
 
-def load_state():
-    try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+def build_daily_summary_embed(current_cars, rates):
+    if not current_cars:
+        return {
+            "title": "📊 Dzienne podsumowanie",
+            "description": "Brak aut spełniających kryteria.",
+            "color": 0x3498db,
+            "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
+        }
+
+    by_country = {}
+    for car_id, car in current_cars.items():
+        c = car.get("country", "?")
+        by_country.setdefault(c, []).append(car)
+
+    fields = []
+    for country, cars in sorted(by_country.items()):
+        flag = COUNTRY_FLAGS.get(country, "🇪🇺")
+        currency = get_currency_for_country(country)
+        lines = []
+        for car in sorted(cars, key=lambda x: x.get("price", 0)):
+            price = car.get("price", 0)
+            price_eur = int(to_eur(price, currency, rates)) if price else 0
+            price_pln = int(to_pln(price, currency, rates)) if price else 0
+            title = car.get("title", "?")[:40]
+            mileage = car.get("mileage_str", "") or ""
+            lines.append(f"[{title}]({car.get('url', '')}) — €{price_eur:,} / {price_pln:,} zł {mileage}".replace(",", " "))
+        fields.append({
+            "name": f"{flag} {country} ({len(cars)} aut)",
+            "value": "\n".join(lines[:10]) or "brak",
+            "inline": False,
+        })
+
+    return {
+        "title": f"📊 Dzienne podsumowanie — {len(current_cars)} aut",
+        "description": f"Filtr: {MIN_YEAR}–{MAX_YEAR}, max €{MAX_EUR:,}, max {MAX_KM:,} km".replace(",", " "),
+        "color": 0x3498db,
+        "fields": fields[:25],
+        "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
+    }
 
 
-def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+def should_send_daily_summary():
+    """Wyslij podsumowanie raz dziennie ok 8:00 UTC"""
+    now = datetime.now(timezone.utc)
+    return now.hour == 8 and now.minute < 15
 
 
 def main():
-    print(f"[{datetime.utcnow().isoformat()}] Start monitorowania...")
-    print(f"  Filtr: {MIN_YEAR}-{MAX_YEAR}, max €{MAX_EUR}, kraje: {[c['name'] for c in COUNTRIES]}")
+    now = datetime.now(timezone.utc)
+    print(f"[{now.isoformat()}] Start monitorowania...")
+    print(f"  Filtr: {MIN_YEAR}-{MAX_YEAR}, max €{MAX_EUR}, max {MAX_KM} km")
 
     print("\nPobieram kursy walut...")
     rates = get_exchange_rates()
@@ -327,24 +429,58 @@ def main():
     print(f"\nAut łącznie: {len(current_cars)}")
 
     previous_state = load_state()
+    history = load_history()
     print(f"Poprzedni stan: {len(previous_state)} aut")
 
+    # zaktualizuj historie cen
+    for car_id, car in current_cars.items():
+        price = car.get("price")
+        if price:
+            currency = get_currency_for_country(car.get("country", ""))
+            history = update_history(history, car_id, price, currency, rates)
+
     embeds = []
+
+    # nowe auta
     for car_id, car in current_cars.items():
         price = car.get("price")
         if car_id not in previous_state:
             print(f"  NOWE: {car_id} {price}")
             embeds.append(build_new_car_embed(car_id, car, price, rates))
-        else:
-            old_price = previous_state[car_id].get("price")
-            if price and old_price and price < old_price:
-                print(f"  SPADEK: {car_id} {old_price} -> {price}")
-                embeds.append(build_price_drop_embed(car_id, car, old_price, price, rates))
+
+    # spadki cen
+    for car_id, car in current_cars.items():
+        price = car.get("price")
+        old_price = previous_state.get(car_id, {}).get("price")
+        if price and old_price and price < old_price:
+            print(f"  SPADEK: {car_id} {old_price} -> {price}")
+            embeds.append(build_price_drop_embed(car_id, car, old_price, price, rates, history))
+
+    # usuniete auta (tylko jesli poprzedni stan nie byl pusty)
+    if previous_state:
+        for car_id, prev in previous_state.items():
+            if car_id not in current_cars:
+                print(f"  USUNIETE: {car_id}")
+                country = prev.get("country", "")
+                fake_car = {"title": prev.get("title", car_id), "country": country, "url": prev.get("url", "")}
+                embeds.append(build_removed_car_embed(car_id, fake_car, prev.get("price"), rates))
+
+    # dzienne podsumowanie
+    if should_send_daily_summary():
+        print("  Wysyłam dzienne podsumowanie...")
+        embeds.insert(0, build_daily_summary_embed(current_cars, rates))
 
     save_state({
-        car_id: {"price": car.get("price"), "seen_at": datetime.utcnow().isoformat()}
+        car_id: {
+            "price": car.get("price"),
+            "title": car.get("title", ""),
+            "country": car.get("country", ""),
+            "url": car.get("url", ""),
+            "seen_at": now.strftime("%Y-%m-%d %H:%M"),
+        }
         for car_id, car in current_cars.items()
     })
+    save_history(history)
 
     if embeds:
         for i in range(0, len(embeds), 10):
