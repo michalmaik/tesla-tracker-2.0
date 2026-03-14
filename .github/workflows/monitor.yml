@@ -27,6 +27,7 @@ jobs:
         with:
           name: cars-state
           path: .
+          github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
       - name: Run monitor
