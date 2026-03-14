@@ -228,9 +228,11 @@ def fetch_country(session, country_cfg, rates):
         if not batch:
             break
 
+        prev_count = len(all_cars)
         all_cars.update(batch)
         offset += len(batch)
-        if len(batch) < 10:
+        # zatrzymaj tylko jesli nic nowego nie dodano (duplikaty) lub batch pusty
+        if len(all_cars) == prev_count:
             break
         time.sleep(1)
 
