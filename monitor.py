@@ -1,5 +1,7 @@
 import json
 import urllib.parse
+import time
+import random
 from datetime import datetime
 from curl_cffi import requests as cf_requests
 import requests
@@ -37,22 +39,60 @@ MAX_PRICE = 20000
 MIN_YEAR = 2020
 MAX_YEAR = 2021
 
+HEADERS = {
+    "Accept": "application/json",
+    "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.tesla.com/nl_NL/inventory/used/m3",
+    "Origin": "https://www.tesla.com",
+}
+
+
+def fetch_with_retry(session, url, max_retries=5):
+    for attempt in range(max_retries):
+        # losowe opoznienie przed kazdym requestem
+        wait = random.uniform(3, 8) + attempt * 5
+        print(f"  Czekam {wait:.1f}s przed requestem (próba {attempt+1}/{max_retries})...")
+        time.sleep(wait)
+
+        resp = session.get(url, headers=HEADERS, timeout=30)
+        print(f"  Status: {resp.status_code}")
+
+        if resp.status_code == 200:
+            return resp
+        elif resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 30))
+            print(f"  429 - czekam {retry_after}s...")
+            time.sleep(retry_after)
+        elif resp.status_code in (403, 404):
+            print(f"  {resp.status_code} - body: {resp.text[:200]}")
+            resp.raise_for_status()
+        else:
+            print(f"  Nieoczekiwany status {resp.status_code}: {resp.text[:200]}")
+            resp.raise_for_status()
+
+    raise Exception(f"Nie udało się po {max_retries} próbach")
+
 
 def fetch_cars():
     all_cars = {}
     offset = 0
+
     session = cf_requests.Session(impersonate="chrome120")
 
-    # najpierw odwiedz strone glowna zeby zdobyc cookies Akamai
-    print("  Pobieram Akamai cookies z tesla.com...")
+    # warm up - odwiedz kilka stron jak normalny user
+    print("  Warm-up: odwiedzam tesla.com...")
     try:
-        session.get(
-            "https://www.tesla.com/nl_NL/inventory/used/m3",
-            timeout=20,
-        )
-        print("  Cookies OK")
+        session.get("https://www.tesla.com/nl_NL/", timeout=15)
+        time.sleep(random.uniform(2, 4))
+        session.get("https://www.tesla.com/nl_NL/inventory/used/m3", headers={
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "nl-NL,nl;q=0.9",
+        }, timeout=15)
+        time.sleep(random.uniform(3, 6))
+        print("  Warm-up OK")
     except Exception as e:
-        print(f"  Cookies error (ignoruję): {e}")
+        print(f"  Warm-up error (ignoruję): {e}")
 
     while True:
         q = dict(QUERY)
@@ -60,12 +100,7 @@ def fetch_cars():
         encoded = urllib.parse.quote(json.dumps(q))
         url = f"{TESLA_API}?query={encoded}"
 
-        resp = session.get(url, timeout=20)
-        print(f"  Status: {resp.status_code}, offset={offset}")
-
-        if resp.status_code == 403 or resp.status_code == 404:
-            print(f"  Body: {resp.text[:300]}")
-            resp.raise_for_status()
+        resp = fetch_with_retry(session, url)
 
         try:
             data = resp.json()
@@ -126,7 +161,7 @@ def send_discord(embeds):
     resp.raise_for_status()
 
 
-def build_new_car_embed(car_id, car, price):
+def build_new_car_embed(vin, car, price):
     price_str = f"€{price:,}".replace(",", " ") if price else "brak ceny"
     return {
         "title": "🚗 Nowe Tesla w ofercie!",
@@ -136,13 +171,13 @@ def build_new_car_embed(car_id, car, price):
         "fields": [
             {"name": "Cena", "value": price_str, "inline": True},
             {"name": "Kraj", "value": "Holandia 🇳🇱", "inline": True},
-            {"name": "VIN", "value": car.get("VIN", "?"), "inline": False},
+            {"name": "VIN", "value": vin, "inline": False},
         ],
         "footer": {"text": f"Tesla CPO Monitor · {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"},
     }
 
 
-def build_price_drop_embed(car_id, car, old_price, new_price):
+def build_price_drop_embed(vin, car, old_price, new_price):
     diff = old_price - new_price
     pct = round(diff / old_price * 100, 1)
     return {
@@ -154,7 +189,7 @@ def build_price_drop_embed(car_id, car, old_price, new_price):
             {"name": "Stara cena", "value": f"€{old_price:,}".replace(",", " "), "inline": True},
             {"name": "Nowa cena", "value": f"€{new_price:,}".replace(",", " "), "inline": True},
             {"name": "Obniżka", "value": f"-€{diff:,} (-{pct}%)".replace(",", " "), "inline": False},
-            {"name": "VIN", "value": car.get("VIN", "?"), "inline": False},
+            {"name": "VIN", "value": vin, "inline": False},
         ],
         "footer": {"text": f"Tesla CPO Monitor · {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"},
     }
