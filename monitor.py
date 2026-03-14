@@ -96,6 +96,9 @@ def get_exchange_rates():
         data = resp.json()
         result = {c: 1.0 / r for c, r in data.get("rates", {}).items()}
         result["PLN"] = 1.0
+        # BGN jest peg do EUR: 1 EUR = 1.956 BGN
+        if not result.get("BGN") or result["BGN"] == 0:
+            result["BGN"] = result.get("EUR", 4.25) / 1.956
         print(f"  Kursy: EUR={result.get('EUR',0):.2f} SEK={result.get('SEK',0):.4f} DKK={result.get('DKK',0):.4f} CZK={result.get('CZK',0):.4f} HUF={result.get('HUF',0):.5f} RON={result.get('RON',0):.4f} BGN={result.get('BGN',0):.4f} PLN")
         return result
     except Exception as e:
@@ -119,7 +122,7 @@ def get_max_local(currency, rates):
     return int(MAX_EUR * rates.get("EUR", 4.25) / rates.get(currency, 1.0))
 
 
-def parse_cars_from_html(html, country):
+def parse_cars_from_html(html, country, label="CPO"):
     cars = {}
     car_blocks = re.findall(
         r"<div\s+class\s*=\s*['\"]car['\"].*?(?=<div\s+class\s*=\s*['\"]car['\"]|$)",
@@ -178,7 +181,7 @@ def parse_cars_from_html(html, country):
                 "mileage": mileage,
                 "mileage_str": mileage_str,
                 "country": country,
-                "listing_type": country_cfg.get("label", "CPO"),
+                "listing_type": label,
                 "image_url": image_url,
             }
         except Exception as e:
@@ -217,7 +220,7 @@ def fetch_country(session, country_cfg, rates):
         if not html or html == "0":
             break
 
-        batch = parse_cars_from_html(html, country)
+        batch = parse_cars_from_html(html, country, country_cfg.get("label", "CPO"))
         print(f"  Sparsowano: {len(batch)} aut")
         if not batch:
             break
