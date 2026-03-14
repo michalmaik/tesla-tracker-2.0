@@ -12,18 +12,53 @@ HISTORY_FILE = "price_history.json"
 API_URL = "https://ev-inventory.com/lib/get_stock_23.php"
 
 COUNTRIES = [
-    {"name": "Netherlands", "currency": "EUR", "token": "131076"},
-    {"name": "Germany",     "currency": "EUR", "token": "131076"},
-    {"name": "France",      "currency": "EUR", "token": "131076"},
-    {"name": "Belgium",     "currency": "EUR", "token": "131076"},
-    {"name": "Luxembourg",  "currency": "EUR", "token": "131076"},
-    {"name": "Sweden",      "currency": "SEK", "token": "131076"},
-    {"name": "Denmark",     "currency": "DKK", "token": "131076"},
+    # EUR
+    {"name": "Netherlands",   "currency": "EUR", "token": "131076"},
+    {"name": "Germany",       "currency": "EUR", "token": "131076"},
+    {"name": "France",        "currency": "EUR", "token": "131076"},
+    {"name": "Belgium",       "currency": "EUR", "token": "131076"},
+    {"name": "Luxembourg",    "currency": "EUR", "token": "131076"},
+    {"name": "Austria",       "currency": "EUR", "token": "131076"},
+    {"name": "Spain",         "currency": "EUR", "token": "131076"},
+    {"name": "Portugal",      "currency": "EUR", "token": "131076"},
+    {"name": "Italy",         "currency": "EUR", "token": "131076"},
+    {"name": "Greece",        "currency": "EUR", "token": "131076"},
+    {"name": "Ireland",       "currency": "EUR", "token": "131076"},
+    {"name": "Finland",       "currency": "EUR", "token": "131076"},
+    {"name": "Estonia",       "currency": "EUR", "token": "131076"},
+    {"name": "Latvia",        "currency": "EUR", "token": "131076"},
+    {"name": "Lithuania",     "currency": "EUR", "token": "131076"},
+    {"name": "Slovakia",      "currency": "EUR", "token": "131076"},
+    {"name": "Slovenia",      "currency": "EUR", "token": "131076"},
+    {"name": "Malta",         "currency": "EUR", "token": "131076"},
+    {"name": "Cyprus",        "currency": "EUR", "token": "131076"},
+    {"name": "Croatia",       "currency": "EUR", "token": "131076"},
+    # SEK
+    {"name": "Sweden",        "currency": "SEK", "token": "131076"},
+    # DKK
+    {"name": "Denmark",       "currency": "DKK", "token": "131076"},
+    # PLN
+    {"name": "Poland",        "currency": "PLN", "token": "131076"},
+    # CZK
+    {"name": "Czech Republic", "currency": "CZK", "token": "131076"},
+    # HUF
+    {"name": "Hungary",       "currency": "HUF", "token": "131076"},
+    # RON
+    {"name": "Romania",       "currency": "RON", "token": "131076"},
+    # BGN
+    {"name": "Bulgaria",      "currency": "BGN", "token": "131076"},
 ]
 
 COUNTRY_FLAGS = {
     "Netherlands": "🇳🇱", "Germany": "🇩🇪", "France": "🇫🇷",
-    "Belgium": "🇧🇪", "Luxembourg": "🇱🇺", "Sweden": "🇸🇪", "Denmark": "🇩🇰",
+    "Belgium": "🇧🇪", "Luxembourg": "🇱🇺", "Sweden": "🇸🇪",
+    "Denmark": "🇩🇰", "Austria": "🇦🇹", "Spain": "🇪🇸",
+    "Portugal": "🇵🇹", "Italy": "🇮🇹", "Greece": "🇬🇷",
+    "Ireland": "🇮🇪", "Finland": "🇫🇮", "Estonia": "🇪🇪",
+    "Latvia": "🇱🇻", "Lithuania": "🇱🇹", "Slovakia": "🇸🇰",
+    "Slovenia": "🇸🇮", "Malta": "🇲🇹", "Cyprus": "🇨🇾",
+    "Poland": "🇵🇱", "Czech Republic": "🇨🇿", "Hungary": "🇭🇺",
+    "Romania": "🇷🇴", "Bulgaria": "🇧🇬", "Croatia": "🇭🇷",
 }
 
 MAX_EUR = 20000
@@ -50,15 +85,15 @@ HEADERS = {
 
 def get_exchange_rates():
     try:
-        resp = requests.get("https://api.frankfurter.app/latest?from=PLN&to=EUR,SEK,DKK", timeout=10)
+        resp = requests.get("https://api.frankfurter.app/latest?from=PLN&to=EUR,SEK,DKK,CZK,HUF,RON,BGN", timeout=10)
         data = resp.json()
         result = {c: 1.0 / r for c, r in data.get("rates", {}).items()}
         result["PLN"] = 1.0
-        print(f"  Kursy: EUR={result.get('EUR', 0):.2f} PLN, SEK={result.get('SEK', 0):.4f} PLN, DKK={result.get('DKK', 0):.4f} PLN")
+        print(f"  Kursy: EUR={result.get('EUR',0):.2f} SEK={result.get('SEK',0):.4f} DKK={result.get('DKK',0):.4f} CZK={result.get('CZK',0):.4f} HUF={result.get('HUF',0):.5f} RON={result.get('RON',0):.4f} BGN={result.get('BGN',0):.4f} PLN")
         return result
     except Exception as e:
         print(f"  Błąd kursów: {e}, używam przybliżonych")
-        return {"EUR": 4.25, "SEK": 0.40, "DKK": 0.57, "PLN": 1.0}
+        return {"EUR": 4.25, "SEK": 0.40, "DKK": 0.57, "CZK": 0.17, "HUF": 0.011, "RON": 0.85, "BGN": 2.17, "PLN": 1.0}
 
 
 def to_eur(price, currency, rates):
