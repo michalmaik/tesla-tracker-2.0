@@ -6,7 +6,10 @@ from datetime import datetime
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1482315139893170367/M86LvQvzrqIw679r1igJsT74hZ8wQNIaLC9MIqt45RWhE8duomeBmUyD6DcPFrc2tY1C"
 STATE_FILE = "cars_state.json"
 
-# Bezposrednie API Tesli - publiczne, bez blokady
+# ScraperAPI - darmowe 1000 req/miesiac, omija blokady
+# Zarejestruj sie na scraperapi.com i wstaw klucz tutaj:
+SCRAPER_API_KEY = "0e8de61fa7b7a1ea1dd31a94478e797d"
+
 TESLA_API = "https://www.tesla.com/inventory/api/v1/inventory-results"
 
 QUERY = {
@@ -41,38 +44,45 @@ HEADERS = {
 }
 
 
+def build_url(offset):
+    q = dict(QUERY)
+    q["offset"] = offset
+    encoded = urllib.parse.quote(json.dumps(q))
+    target_url = f"{TESLA_API}?query={encoded}"
+    # przez ScraperAPI proxy
+    return f"https://api.scraperapi.com?api_key={SCRAPER_API_KEY}&url={urllib.parse.quote(target_url)}"
+
+
 def fetch_cars():
     all_cars = {}
     offset = 0
 
     while True:
-        QUERY["offset"] = offset
-        encoded = urllib.parse.quote(json.dumps(QUERY))
-        url = f"{TESLA_API}?query={encoded}"
-
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        print(f"  Tesla API status: {resp.status_code}, offset={offset}")
+        url = build_url(offset)
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+        print(f"  Status: {resp.status_code}, offset={offset}")
         resp.raise_for_status()
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception:
+            print(f"  Nie jest JSON: {resp.text[:300]}")
+            raise
+
         results = data.get("results", [])
         total = data.get("total_matches_found", 0)
-        print(f"  Wyników: {len(results)}, total: {total}")
+        print(f"  Wyników w odpowiedzi: {len(results)}, total: {total}")
 
         for car in results:
             vin = car.get("VIN", "")
             if not vin:
                 continue
-
             year = car.get("Year", 0)
-            price = car.get("InventoryPrice", 0) or car.get("Price", 0)
-
-            # filtruj rok i cene
+            price = car.get("InventoryPrice") or car.get("Price") or 0
             if year and (year < MIN_YEAR or year > MAX_YEAR):
                 continue
             if price and price > MAX_PRICE:
                 continue
-
             all_cars[vin] = car
 
         offset += len(results)
