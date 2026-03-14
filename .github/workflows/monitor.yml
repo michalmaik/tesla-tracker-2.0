@@ -2,7 +2,7 @@ name: Tesla CPO Monitor
 
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -18,8 +18,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests selenium webdriver-manager
 
       - name: Download previous state
         uses: actions/download-artifact@v4
