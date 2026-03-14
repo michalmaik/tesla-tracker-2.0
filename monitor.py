@@ -13,14 +13,10 @@ HISTORY_FILE = "price_history.json"
 
 API_URL = "https://ev-inventory.com/lib/get_stock_23.php"
 
-# tokeny: 131076 = CPO, 65540 = Used
+# token: 131076 = CPO (tylko Tesla)
 LISTING_TYPES = [
     {"token": "131076", "label": "CPO"},
-    {"token": "65540",  "label": "Used"},
 ]
-
-# kraje dla Used (tylko wybrane)
-USED_COUNTRIES = {"Netherlands", "Belgium", "Germany"}
 
 COUNTRIES = [
     # EUR
@@ -263,9 +259,6 @@ def fetch_all_cars(rates):
             if mode == "CPO" and listing["label"] != "CPO":
                 continue
             if mode == "USED" and listing["label"] != "Used":
-                continue
-            # Used tylko dla wybranych krajow
-            if listing["label"] == "Used" and country_cfg["name"] not in USED_COUNTRIES:
                 continue
             cfg = {**country_cfg, "token": listing["token"], "label": listing["label"]}
             cars = fetch_country(session, cfg, rates)
