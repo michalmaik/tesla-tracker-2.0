@@ -11,42 +11,48 @@ HISTORY_FILE = "price_history.json"
 
 API_URL = "https://ev-inventory.com/lib/get_stock_23.php"
 
+# tokeny: 131076 = CPO, 65540 = Used
+LISTING_TYPES = [
+    {"token": "131076", "label": "CPO"},
+    {"token": "65540",  "label": "Used"},
+]
+
 COUNTRIES = [
     # EUR
-    {"name": "Netherlands",   "currency": "EUR", "token": "131076"},
-    {"name": "Germany",       "currency": "EUR", "token": "131076"},
-    {"name": "France",        "currency": "EUR", "token": "131076"},
-    {"name": "Belgium",       "currency": "EUR", "token": "131076"},
-    {"name": "Luxembourg",    "currency": "EUR", "token": "131076"},
-    {"name": "Austria",       "currency": "EUR", "token": "131076"},
-    {"name": "Spain",         "currency": "EUR", "token": "131076"},
-    {"name": "Portugal",      "currency": "EUR", "token": "131076"},
-    {"name": "Italy",         "currency": "EUR", "token": "131076"},
-    {"name": "Greece",        "currency": "EUR", "token": "131076"},
-    {"name": "Ireland",       "currency": "EUR", "token": "131076"},
-    {"name": "Finland",       "currency": "EUR", "token": "131076"},
-    {"name": "Estonia",       "currency": "EUR", "token": "131076"},
-    {"name": "Latvia",        "currency": "EUR", "token": "131076"},
-    {"name": "Lithuania",     "currency": "EUR", "token": "131076"},
-    {"name": "Slovakia",      "currency": "EUR", "token": "131076"},
-    {"name": "Slovenia",      "currency": "EUR", "token": "131076"},
-    {"name": "Malta",         "currency": "EUR", "token": "131076"},
-    {"name": "Cyprus",        "currency": "EUR", "token": "131076"},
-    {"name": "Croatia",       "currency": "EUR", "token": "131076"},
+    {"name": "Netherlands",    "currency": "EUR"},
+    {"name": "Germany",        "currency": "EUR"},
+    {"name": "France",         "currency": "EUR"},
+    {"name": "Belgium",        "currency": "EUR"},
+    {"name": "Luxembourg",     "currency": "EUR"},
+    {"name": "Austria",        "currency": "EUR"},
+    {"name": "Spain",          "currency": "EUR"},
+    {"name": "Portugal",       "currency": "EUR"},
+    {"name": "Italy",          "currency": "EUR"},
+    {"name": "Greece",         "currency": "EUR"},
+    {"name": "Ireland",        "currency": "EUR"},
+    {"name": "Finland",        "currency": "EUR"},
+    {"name": "Estonia",        "currency": "EUR"},
+    {"name": "Latvia",         "currency": "EUR"},
+    {"name": "Lithuania",      "currency": "EUR"},
+    {"name": "Slovakia",       "currency": "EUR"},
+    {"name": "Slovenia",       "currency": "EUR"},
+    {"name": "Malta",          "currency": "EUR"},
+    {"name": "Cyprus",         "currency": "EUR"},
+    {"name": "Croatia",        "currency": "EUR"},
     # SEK
-    {"name": "Sweden",        "currency": "SEK", "token": "131076"},
+    {"name": "Sweden",         "currency": "SEK"},
     # DKK
-    {"name": "Denmark",       "currency": "DKK", "token": "131076"},
+    {"name": "Denmark",        "currency": "DKK"},
     # PLN
-    {"name": "Poland",        "currency": "PLN", "token": "131076"},
+    {"name": "Poland",         "currency": "PLN"},
     # CZK
-    {"name": "Czech Republic", "currency": "CZK", "token": "131076"},
+    {"name": "Czech Republic",  "currency": "CZK"},
     # HUF
-    {"name": "Hungary",       "currency": "HUF", "token": "131076"},
+    {"name": "Hungary",        "currency": "HUF"},
     # RON
-    {"name": "Romania",       "currency": "RON", "token": "131076"},
+    {"name": "Romania",        "currency": "RON"},
     # BGN
-    {"name": "Bulgaria",      "currency": "BGN", "token": "131076"},
+    {"name": "Bulgaria",       "currency": "BGN"},
 ]
 
 COUNTRY_FLAGS = {
@@ -62,7 +68,8 @@ COUNTRY_FLAGS = {
 }
 
 MAX_EUR = 20000
-MIN_YEAR = 2018
+MIN_YEAR_CPO = 2019
+MIN_YEAR_USED = 2020
 MAX_YEAR = 2021
 MAX_KM = 150000  # max przebieg w km
 
@@ -171,6 +178,7 @@ def parse_cars_from_html(html, country):
                 "mileage": mileage,
                 "mileage_str": mileage_str,
                 "country": country,
+                "listing_type": country_cfg.get("label", "CPO"),
                 "image_url": image_url,
             }
         except Exception as e:
@@ -185,11 +193,12 @@ def fetch_country(session, country_cfg, rates):
     max_local = get_max_local(currency, rates)
     print(f"\n  [{country}] max={max_local} {currency}, max_km={MAX_KM}")
 
+    min_year = MIN_YEAR_CPO if country_cfg.get("label") == "CPO" else MIN_YEAR_USED
     form_data = {
         "country": country, "state": "", "sortsale": "256",
         "token": country_cfg["token"], "spec": "0", "advanced": "0",
         "miles": "99999", "max": str(max_local),
-        "minyear": str(MIN_YEAR), "maxyear": str(MAX_YEAR),
+        "minyear": str(min_year), "maxyear": str(MAX_YEAR),
         "minrange": "0", "offset": "0",
     }
 
@@ -236,9 +245,11 @@ def fetch_all_cars(rates):
         print(f"  Cookies error: {e}")
 
     for country_cfg in COUNTRIES:
-        cars = fetch_country(session, country_cfg, rates)
-        all_cars.update(cars)
-        time.sleep(2)
+        for listing in LISTING_TYPES:
+            cfg = {**country_cfg, "token": listing["token"], "label": listing["label"]}
+            cars = fetch_country(session, cfg, rates)
+            all_cars.update(cars)
+            time.sleep(2)
 
     return all_cars
 
@@ -289,9 +300,52 @@ def format_price_history(history_entries):
     if len(history_entries) < 2:
         return None
     lines = []
+    prev = None
     for entry in history_entries[-5:]:
-        lines.append(f"{entry['date']}: €{entry['eur']:,}".replace(",", " "))
+        if prev is None:
+            trend = ""
+        elif entry["eur"] < prev:
+            trend = " 📉"
+        elif entry["eur"] > prev:
+            trend = " 📈"
+        else:
+            trend = ""
+        lines.append(f"{entry['date']}: €{entry['eur']:,}{trend}".replace(",", " "))
+        prev = entry["eur"]
     return "\n".join(lines)
+
+
+def build_price_rise_embed(car_id, car, old_price, new_price, rates):
+    country = car.get("country", "")
+    currency = get_currency_for_country(country)
+    flag = COUNTRY_FLAGS.get(country, "🇪🇺")
+    old_eur = int(to_eur(old_price, currency, rates))
+    new_eur = int(to_eur(new_price, currency, rates))
+    old_pln = int(to_pln(old_price, currency, rates))
+    new_pln = int(to_pln(new_price, currency, rates))
+    diff_eur = new_eur - old_eur
+    diff_pln = new_pln - old_pln
+    pct = round((new_price - old_price) / old_price * 100, 1)
+    embed = {
+        "title": f"📈 Wzrost ceny! {flag}",
+        "description": car.get("title", "Tesla Model 3"),
+        "url": car.get("url", ""),
+        "color": 0xe74c3c,
+        "fields": [
+            {"name": "Stara cena (EUR)", "value": f"€{old_eur:,}".replace(",", " "), "inline": True},
+            {"name": "Nowa cena (EUR)", "value": f"€{new_eur:,}".replace(",", " "), "inline": True},
+            {"name": "Wzrost (EUR)", "value": f"+€{diff_eur:,} (+{pct}%)".replace(",", " "), "inline": True},
+            {"name": "Stara cena (PLN)", "value": f"{old_pln:,} zł".replace(",", " "), "inline": True},
+            {"name": "Nowa cena (PLN)", "value": f"{new_pln:,} zł".replace(",", " "), "inline": True},
+            {"name": "Wzrost (PLN)", "value": f"+{diff_pln:,} zł (+{pct}%)".replace(",", " "), "inline": True},
+            {"name": "Kraj", "value": f"{flag} {country}", "inline": True},
+            {"name": "Typ", "value": car.get("listing_type", "CPO"), "inline": True},
+        ],
+        "footer": {"text": f"Tesla Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
+    }
+    if car.get("image_url"):
+        embed["image"] = {"url": car["image_url"]}
+    return embed
 
 
 def send_discord(embeds):
@@ -334,6 +388,7 @@ def build_new_car_embed(car_id, car, price, rates):
             {"name": "Kraj", "value": f"{flag} {country}", "inline": True},
             {"name": "Rok", "value": str(car.get("year", "—")), "inline": True},
             {"name": "Przebieg", "value": car.get("mileage_str", "—") or "—", "inline": True},
+            {"name": "Typ", "value": car.get("listing_type", "CPO"), "inline": True},
         ],
         "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
     }
@@ -483,13 +538,16 @@ def main():
             print(f"  NOWE: {car_id} {price}")
             embeds.append(build_new_car_embed(car_id, car, price, rates))
 
-    # spadki cen
+    # zmiany cen
     for car_id, car in current_cars.items():
         price = car.get("price")
         old_price = previous_state.get(car_id, {}).get("price")
         if price and old_price and price < old_price:
             print(f"  SPADEK: {car_id} {old_price} -> {price}")
             embeds.append(build_price_drop_embed(car_id, car, old_price, price, rates, history))
+        elif price and old_price and price > old_price:
+            print(f"  WZROST: {car_id} {old_price} -> {price}")
+            embeds.append(build_price_rise_embed(car_id, car, old_price, price, rates))
 
     # usuniete auta (tylko jesli poprzedni stan nie byl pusty)
     if previous_state:
@@ -522,7 +580,7 @@ def main():
             send_discord(embeds[i:i+10])
         print(f"Wysłano {len(embeds)} powiadomień.")
     else:
-        print("Brak zmian — nic nie wysłano.")
+        print("Brak zmian.")
 
 
 if __name__ == "__main__":
