@@ -493,7 +493,7 @@ def build_daily_summary_embed(current_cars, rates):
 
     return {
         "title": f"📊 Dzienne podsumowanie — {len(current_cars)} aut",
-        "description": f"Filtr: {MIN_YEAR}–{MAX_YEAR}, max €{MAX_EUR:,}, max {MAX_KM:,} km".replace(",", " "),
+        "description": f"Filtr: CPO {MIN_YEAR_CPO}–{MAX_YEAR} / Used {MIN_YEAR_USED}–{MAX_YEAR}, max €{MAX_EUR:,}, max {MAX_KM:,} km".replace(",", " "),
         "color": 0x3498db,
         "fields": fields[:25],
         "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
@@ -509,7 +509,7 @@ def should_send_daily_summary():
 def main():
     now = datetime.now(timezone.utc)
     print(f"[{now.isoformat()}] Start monitorowania...")
-    print(f"  Filtr: {MIN_YEAR}-{MAX_YEAR}, max €{MAX_EUR}, max {MAX_KM} km")
+    print(f"  Filtr: CPO {MIN_YEAR_CPO}-{MAX_YEAR}, Used {MIN_YEAR_USED}-{MAX_YEAR}, max €{MAX_EUR}, max {MAX_KM} km")
 
     print("\nPobieram kursy walut...")
     rates = get_exchange_rates()
