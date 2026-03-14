@@ -1,8 +1,9 @@
 import requests
 import json
 from datetime import datetime
+import time
 
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/TWOJ_WEBHOOK_TUTAJ"
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1482315139893170367/M86LvQvzrqIw679r1igJsT74hZ8wQNIaLC9MIqt45RWhE8duomeBmUyD6DcPFrc2tY1C"
 STATE_FILE = "cars_state.json"
 
 API_URL = "https://ev-inventory.com/wp-content/themes/evtheme/get_stock_23.php"
@@ -22,21 +23,55 @@ PARAMS = {
 }
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://ev-inventory.com/for-sale/Netherlands/M3/CPO/",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "X-Requested-With": "XMLHttpRequest",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 
 def fetch_cars():
     all_cars = {}
     offset = 0
+    session = requests.Session()
+
+    # najpierw odwiedz glowna strone zeby dostac cookies
+    print("  Pobieram cookies z głównej strony...")
+    try:
+        session.get(
+            "https://ev-inventory.com/for-sale/Netherlands/M3/CPO/",
+            headers={
+                "User-Agent": HEADERS["User-Agent"],
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=15,
+        )
+        time.sleep(1)
+    except Exception as e:
+        print(f"  Uwaga: nie udało się pobrać cookies: {e}")
+
     while True:
-        PARAMS["offset"] = offset
-        resp = requests.get(API_URL, params=PARAMS, headers=HEADERS, timeout=15)
+        params = dict(PARAMS)
+        params["offset"] = offset
+        resp = session.get(API_URL, params=params, headers=HEADERS, timeout=15)
+        print(f"  Status HTTP: {resp.status_code}, URL: {resp.url}")
         resp.raise_for_status()
-        data = resp.json()
+
+        try:
+            data = resp.json()
+        except Exception:
+            print(f"  Odpowiedź nie jest JSON:\n{resp.text[:500]}")
+            raise
 
         cars = data.get("results", [])
+        print(f"  offset={offset}, wyniki={len(cars)}, total={data.get('total')}")
         if not cars:
             break
 
@@ -87,6 +122,7 @@ def format_car_info(car):
 def send_discord(embeds):
     payload = {"embeds": embeds}
     resp = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+    print(f"  Discord status: {resp.status_code}")
     resp.raise_for_status()
 
 
@@ -128,10 +164,11 @@ def build_price_drop_embed(car, old_price, new_price):
 
 
 def load_state():
-    if os.path.exists(STATE_FILE):
+    try:
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {}
+    except Exception:
+        return {}
 
 
 def save_state(state):
@@ -145,6 +182,7 @@ def main():
     print(f"Znaleziono {len(current_cars)} aut.")
 
     previous_state = load_state()
+    print(f"Poprzedni stan: {len(previous_state)} aut.")
 
     embeds = []
 
