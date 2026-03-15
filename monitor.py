@@ -436,7 +436,7 @@ def build_daily_summary_embed(current_cars, rates):
             price_pln = int(to_pln(price, currency, rates)) if price else 0
             title = car.get("title", "?")[:40]
             mileage = car.get("mileage_str", "") or ""
-            lines.append(f"[{title}]({car.get('url', '')}) — €{price_eur:,} / {price_pln:,} zł {mileage}".replace(",", " "))
+            lines.append(f"[{title}]({tesla_url(car)}) — €{price_eur:,} / {price_pln:,} zł {mileage}".replace(",", " "))
         fields.append({
             "name": f"{flag} {country} ({len(cars)} aut)",
             "value": "\n".join(lines[:10]) or "brak",
@@ -550,7 +550,7 @@ def main():
             for car in sorted(country_cars, key=lambda x: x.get("price", 0)):
                 price = car.get("price", 0)
                 price_eur = int(to_eur(price, currency, rates)) if price else 0
-                lines.append(f"{flag} [{car.get('title','?')}]({car.get('url','')}) — \u20ac{price_eur:,}".replace(",", " "))
+                lines.append(f"{flag} [{car.get('title','?')}]({tesla_url(car)}) — \u20ac{price_eur:,}".replace(",", " "))
 
         send_discord([{
             "title": "\U0001f527 Test — bot dziala!",
