@@ -58,11 +58,11 @@ COUNTRY_FLAGS = {
     "Romania": "🇷🇴", "Bulgaria": "🇧🇬", "Croatia": "🇭🇷",
 }
 
-MAX_EUR   = 19000
-MIN_YEAR_CPO  = 2019
-MIN_YEAR_USED = 2020
+MAX_EUR   = 19400
+MIN_YEAR_CPO  = 2018
+MIN_YEAR_USED = 2018
 MAX_YEAR  = 2021
-MAX_KM    = 150000
+MAX_KM    = 200000
 
 HEADERS = {
     "accept": "*/*",
