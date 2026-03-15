@@ -530,7 +530,34 @@ def main():
         send_discord([build_daily_summary_embed(current_cars, rates)])
         print("  Wysłano dzienne podsumowanie.")
 
-    if not embeds_new and not embeds_drops:
+    # powiadomienie testowe — tylko przy ręcznym uruchomieniu
+    is_manual = os.environ.get("MANUAL_RUN", "false").lower() == "true"
+    if is_manual:
+        lines = []
+        country_set = sorted(set(car.get("country", "?") for car in current_cars.values()))
+        for country in country_set:
+            flag = COUNTRY_FLAGS.get(country, "🇪🇺")
+            currency = get_currency_for_country(country)
+            country_cars = [c for c in current_cars.values() if c.get("country") == country]
+            for car in sorted(country_cars, key=lambda x: x.get("price", 0)):
+                price = car.get("price", 0)
+                price_eur = int(to_eur(price, currency, rates)) if price else 0
+                lines.append(f"{flag} [{car.get('title','?')}]({car.get('url','')}) — \u20ac{price_eur:,}".replace(",", " "))
+
+        send_discord([{
+            "title": "\U0001f527 Test — bot dziala!",
+            "description": "\n".join(lines) if lines else "Brak aut spelniajacych kryteria.",
+            "color": 0x3498db,
+            "fields": [
+                {"name": "Aut w ofercie", "value": str(len(current_cars)), "inline": True},
+                {"name": "Filtr ceny",    "value": f"max \u20ac{MAX_EUR:,}".replace(",", " "), "inline": True},
+                {"name": "Filtr km",      "value": f"max {MAX_KM:,} km".replace(",", " "), "inline": True},
+                {"name": "Roczniki",      "value": f"{MIN_YEAR_CPO}\u2013{MAX_YEAR}", "inline": True},
+            ],
+            "footer": {"text": f"Tesla CPO Monitor \u00b7 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
+        }])
+        print("  Wyslano powiadomienie testowe.")
+    elif not embeds_new and not embeds_drops:
         print("Brak zmian.")
 
 
