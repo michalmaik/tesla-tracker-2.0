@@ -58,7 +58,7 @@ COUNTRY_FLAGS = {
     "Romania": "🇷🇴", "Bulgaria": "🇧🇬", "Croatia": "🇭🇷",
 }
 
-MAX_EUR   = 20000
+MAX_EUR   = 19000
 MIN_YEAR_CPO  = 2019
 MIN_YEAR_USED = 2020
 MAX_YEAR  = 2021
