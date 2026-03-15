@@ -58,6 +58,19 @@ COUNTRY_FLAGS = {
     "Romania": "🇷🇴", "Bulgaria": "🇧🇬", "Croatia": "🇭🇷",
 }
 
+
+COUNTRY_LOCALE = {
+    "Netherlands": "nl_NL", "Germany": "de_DE", "France": "fr_FR",
+    "Belgium": "fr_BE", "Luxembourg": "fr_LU", "Sweden": "sv_SE",
+    "Denmark": "da_DK", "Austria": "de_AT", "Spain": "es_ES",
+    "Portugal": "pt_PT", "Italy": "it_IT", "Greece": "el_GR",
+    "Ireland": "en_IE", "Finland": "fi_FI", "Estonia": "et_EE",
+    "Latvia": "lv_LV", "Lithuania": "lt_LT", "Slovakia": "sk_SK",
+    "Slovenia": "sl_SI", "Malta": "en_MT", "Cyprus": "el_CY",
+    "Poland": "pl_PL", "Czech Republic": "cs_CZ", "Hungary": "hu_HU",
+    "Romania": "ro_RO", "Bulgaria": "bg_BG", "Croatia": "hr_HR",
+}
+
 MAX_EUR   = 19500
 MIN_YEAR_CPO  = 2018
 MIN_YEAR_USED = 2018
@@ -118,6 +131,14 @@ def get_currency_for_country(country):
             return c["currency"]
     return "EUR"
 
+
+
+def tesla_url(car):
+    """Buduje bezpośredni link do strony auta na tesla.com"""
+    country = car.get("country", "")
+    locale = COUNTRY_LOCALE.get(country, "en_US")
+    vin = car.get("id", "").split("-", 1)[-1]  # usuń prefix kraju
+    return f"https://www.tesla.com/{locale}/m3/order/{vin}?titleStatus=used&redirect=no"
 
 def make_car_id(country, url, title, year):
     """Stabilne ID — nie zmienia się gdy Tesla rotuje parametry URL."""
@@ -336,33 +357,23 @@ def build_new_car_embed(car_id, car, price, rates):
     flag = COUNTRY_FLAGS.get(country, "🇪🇺")
     price_eur = int(to_eur(price, currency, rates)) if price else 0
     price_pln = int(to_pln(price, currency, rates)) if price else 0
+    mileage = car.get("mileage_str", "—") or "—"
+    year = car.get("year", "—")
+    url = tesla_url(car)
 
-    if currency == "EUR":
-        price_local_str = f"€{price:,}".replace(",", " ")
-    elif currency == "SEK":
-        price_local_str = f"{price:,} kr".replace(",", " ")
-    else:
-        price_local_str = f"{price:,} {currency}".replace(",", " ")
+    lines = [
+        f"{flag} **{car.get('title', 'Tesla Model 3')}**",
+        f"💰 €{price_eur:,} (~{price_pln:,} zł)".replace(",", " "),
+        f"📅 {year}  |  🛣️ {mileage}",
+        f"🔗 [Zobacz na Tesla.com]({url})",
+    ]
 
-    embed = {
+    return {
         "title": f"🚗 Nowe Tesla w ofercie! {flag}",
-        "description": car.get("title", "Tesla Model 3"),
-        "url": car.get("url", ""),
+        "description": "\n".join(lines),
         "color": 0x1DB954,
-        "fields": [
-            {"name": "Cena lokalna", "value": price_local_str if price else "brak", "inline": True},
-            {"name": "≈ EUR",        "value": f"€{price_eur:,}".replace(",", " "),  "inline": True},
-            {"name": "≈ PLN",        "value": f"{price_pln:,} zł".replace(",", " "), "inline": True},
-            {"name": "Kraj",         "value": f"{flag} {country}", "inline": True},
-            {"name": "Rok",          "value": str(car.get("year", "—")),             "inline": True},
-            {"name": "Przebieg",     "value": car.get("mileage_str", "—") or "—",   "inline": True},
-            {"name": "Typ",          "value": car.get("listing_type", "CPO"),        "inline": True},
-        ],
         "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
     }
-    if car.get("image_url"):
-        embed["image"] = {"url": car["image_url"]}
-    return embed
 
 
 def build_price_drop_embed(car_id, car, old_price, new_price, rates, history):
@@ -377,32 +388,29 @@ def build_price_drop_embed(car_id, car, old_price, new_price, rates, history):
     diff_eur = old_eur - new_eur
     diff_pln = old_pln - new_pln
     pct = round((old_price - new_price) / old_price * 100, 1)
+    mileage = car.get("mileage_str", "—") or "—"
+    year = car.get("year", "—")
+    url = tesla_url(car)
 
-    embed = {
-        "title": f"📉 Spadek ceny! {flag}",
-        "description": car.get("title", "Tesla Model 3"),
-        "url": car.get("url", ""),
-        "color": 0xF0A500,
-        "fields": [
-            {"name": "Stara cena (EUR)", "value": f"€{old_eur:,}".replace(",", " "),          "inline": True},
-            {"name": "Nowa cena (EUR)",  "value": f"€{new_eur:,}".replace(",", " "),          "inline": True},
-            {"name": "Obniżka (EUR)",    "value": f"-€{diff_eur:,} (-{pct}%)".replace(",", " "), "inline": True},
-            {"name": "Stara cena (PLN)", "value": f"{old_pln:,} zł".replace(",", " "),        "inline": True},
-            {"name": "Nowa cena (PLN)",  "value": f"{new_pln:,} zł".replace(",", " "),        "inline": True},
-            {"name": "Obniżka (PLN)",    "value": f"-{diff_pln:,} zł".replace(",", " "),      "inline": True},
-            {"name": "Kraj",             "value": f"{flag} {country}",                        "inline": True},
-            {"name": "Rok",              "value": str(car.get("year", "—")),                   "inline": True},
-            {"name": "Przebieg",         "value": car.get("mileage_str", "—") or "—",         "inline": True},
-        ],
-        "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
-    }
+    lines = [
+        f"{flag} **{car.get('title', 'Tesla Model 3')}**",
+        f"💰 €{old_eur:,} → €{new_eur:,} (-€{diff_eur:,}, -{pct}%)".replace(",", " "),
+        f"🇵🇱 {old_pln:,} zł → {new_pln:,} zł (-{diff_pln:,} zł)".replace(",", " "),
+        f"📅 {year}  |  🛣️ {mileage}",
+        f"🔗 [Zobacz na Tesla.com]({url})",
+    ]
+
     history_entries = history.get(car_id, [])
     history_str = format_price_history(history_entries)
     if history_str:
-        embed["fields"].append({"name": "Historia cen (EUR)", "value": history_str, "inline": False})
-    if car.get("image_url"):
-        embed["image"] = {"url": car["image_url"]}
-    return embed
+        lines.append(f"\n📊 Historia:\n{history_str}")
+
+    return {
+        "title": f"📉 Spadek ceny! {flag}",
+        "description": "\n".join(lines),
+        "color": 0xF0A500,
+        "footer": {"text": f"Tesla CPO Monitor · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"},
+    }
 
 
 def build_daily_summary_embed(current_cars, rates):
